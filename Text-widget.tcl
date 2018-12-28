@@ -9,7 +9,15 @@ proc parse_text { widget lang } {
     set SyntaxRules [dict create]
     set SyntaxRules [parse text]
 
-    $widget tag add
+    puts $SyntaxRules
+
+    #dict for {index object} $SyntaxRules {
+        # set start [dict get $object start]
+        # set end [dict get $object end]
+        # set tag [dict get $object tag]
+
+        #$widget tag add $tag start end
+    #}
     # return SyntaxRules
 }
 
@@ -36,12 +44,14 @@ proc parse { t } {
 
         if {[string compare $Now "plain"] == 0} {
 
-            if { [string compare [string index $text $i] {\"}] == 0 } {
+            if { [string compare [string index $text $i] "\""] == 0 } {
+                puts "hit double quote"
             ##
             ## Opening double quote encountered
             ##
                 set text [string range "$text" $i end]
                 set tags [parse_dbl_quotes text]
+                puts $tags
 
                 ## The last tag's end property is of our
                 ## interest as we will use it to adjust
@@ -75,40 +85,77 @@ proc parse { t } {
         incr c
      }
 
-     return Tags
+     puts $Tags
+     return $Tags
 }
 
 proc concat_dicts { D1 D2 } {
-    upvar 1 D1 dict1;
-    upvar 1 D2 dict2;
-    set keys [dict keys dict1]
+    upvar $D1 dict1;
+    upvar $D2 dict2;
+    set keys [dict keys $dict1]
     set index [expr [llength keys] - 1]
-    set d2Length [llength [dict keys dict2]]
+    set d2Length [llength [dict keys $dict2]]
 
-    for {set i index; set y 0} {e < d2Length} {incr i; incr y} {
-        dict set dict1 $i [dict get dict2 y]
+    for {set i $index; set y 0} {$y < $d2Length} {incr i; incr y} {
+        dict set dict1 $i [dict get $dict2 y]
 }
 }
 
 proc adjust_tags_indexes { T charOffset lineOffset} {
-    upvar 1 T Tags
+    upvar $T Tags
     ##
     ## We are going to alter only the $charIndex
     ## for the first line
     ##
-    set firstLine [dict get Tags 0]
-    regexp {^([^.]+).([^.]+)} "[dict get firstLine start]" -> charIndex lineIndex
-    set charIndex [expr $charIndex + $charOffset]
-    dict set firstLine start "$charIndex.$lineIndex"
 
-    #dict set Tags 
-    foreach tag Tags {
-        ## we are going to adjust only line numbers
-        ## for all lines except the first one.
-        regexp {^([^.]+).([^.]+)} "[dict get tag start]" -> charIndex lineIndex
-        set lineIndex [expr $lineIndex + $lineOffset]
-        dict set tag start "$charIndex.$lineIndex"
+    if {[dict exists $Tags 0]} {
+        set firstLine [dict get $Tags 0]
+        regexp {^([^.]+).([^.]+)} "[dict get $firstLine start]" -> charIndex lineIndex
+        set charIndex [expr $charIndex + $charOffset]
+        dict set firstLine start "$charIndex.$lineIndex"
+
+        #dict set Tags 
+        foreach tag Tags {
+            ## we are going to adjust only line numbers
+            ## for all lines except the first one.
+            puts "tag is: $tag"
+
+            regexp {^([^.]+).([^.]+)} "[dict get $tag start]" -> charIndex lineIndex
+            set lineIndex [expr $lineIndex + $lineOffset]
+            dict set tag start "$charIndex.$lineIndex"
+        }
+    }
 }
+
+# This procedure is used to overcome a limitation of Tcl - namely that references
+# to Dictionary elements don't exist. However, Dictionary references are still
+# available, because they are hold in regular variables and the latter can be
+# referenced withing another proc using the 'upvar' command.
+#
+# This procedure modifies the given dictionary in place. That is - no value is
+# returned. For this to work the dictionary should not be passed in its whole,
+# rather its variable name
+#
+# Functionality: Begings looking for the given tag name in the given dictionary
+#
+# Parameters:
+# * dict - name of the dictionary variable whose contents will be used
+# * Tag - name of the tag to be looked for
+# * prop - Dictionary's key
+# * value - The value that will be used as a new value
+#
+proc setLastTag {dict Tag prop value} {
+    upvar $dict Dict
+
+    set reversedKeys [lreverse [dict keys $Dict]]
+    set length [llength reversedKeys]
+    #set returnTag 
+
+    for {set i 0} {$i < $length} {incr i} {
+        if {[string compare [dict get $Dict [lindex $reversedKeys $i] tag] $Tag] == 0} {
+            dict set Dict $prop $value
+        }
+    }
 }
 
 ## this procedure expects a 
@@ -118,56 +165,63 @@ proc adjust_tags_indexes { T charOffset lineOffset} {
 ## quote must be present
 proc parse_dbl_quotes { t } {
     upvar $t text
-    set Variables [dict create]
+    set Tags [dict create]
     # possible values are plain
     # and variable
-    set Now plain
+    set Now Plain
 
     # TODO scan for setting variables with "set " and apply tags for variable' encounters
-    for {set i 0; set c 0; set l 0; set vnum 0} { i < [string length "$text"]} { incr i } {
-        if { [string compare "$Now" Variable] != 0} {
-            if { [string compare [string index "$text" $i] {\$}] == 0 } {
-                dict set Variables $vnum [dict create start "$c.$l" tag Variable]
-                set Now Variable
+    for {set i 0; set c 0; set l 0; set vnum 0} { $i < [string length "$text"]} { incr i } {
+
+        if { [string compare [string index "$text" $i] {\$}] == 0 } {
+            dict set Tags $vnum [dict create start "$c.$l" tag Tagiable]
+            set Now Variable
+            incr vnum
+        }
+        if { [string compare "$Now" Plain] == 0} {
+            if { [string compare [string index "$text" $i] "\""] == 0 } {
+                dict set Tags $vnum [dict create start "$c.$l" tag DoubleQuotes]
+                set Now DoubleQuotes
+                incr vnum
             }
-       }
-       else {
-           ## *If the character we are at is a double quote we must terminate
-           if { regexp {\"} [string index "$text" $i] == 0} {
-               set Now Plain
-               set Var [dict get Variables $vnum]
-               dict set Var end "$c.$l"
+        } else {
+            ## *If the character we are at is a double quote we must terminate
+            if {[regexp "\"" [string index "$text" $i]] == 1} {
+                set Now Plain
+                setLastTag Tags DoubleQuotes end "$c.$l"
+                #dict set Tag end "$c.$l"
 
-           }
+            }
 
-           ## *If the character we are at is non-alphanumeric consider variable name to have been collected
-           if{[regexp {\W} string index "$text" $i]} {
-               set Now Plain
-               set Var [dict get Variables $vnum]
-               dict set Var end "$c.$l"
-           }
-       }
-       incr c;
+            ## *If the character we are at is non-alphanumeric consider variable name to have been collected
+            if {[string compare "$Now" Variable] == 0 && [regexp {\W} string index "$text" $i] == 1} {
+                set Now Plain
+                set Tag [dict get $Tags $vnum]
+                dict set Tag end "$c.$l"
+            }
+        }
+        incr c;
 
-       ## encountering a new line
-       ## character. Reflect that
-       ## in the program
-       if {regexp {\n} [string index $i "$text"] == 0} {
-           incr l;
-           set c 0;
-       }
-     }
+        ## encountering a new line
+        ## character. Reflect that
+        ## in the program
+        if {[regexp "\n" [string index $text $i]] == 0} {
+            incr l;
+            set c 0;
+        }
+    }
 
- ## here we are altering the
- ## variable passed to us by the
- ## caller. The caller must
- ## take this into account.
- ## A conventional for loop there
- ## might not be appropriate
- ## as it's making a copy of
- ## the iterated dictionary.
- set text [string range "$text" $i end]
- return $Variables
+    ## here we are altering the
+    ## variable passed to us by the
+    ## caller. The caller must
+    ## take this into account.
+    ## A conventional for loop there
+    ## might not be appropriate
+    ## as it's making a copy of
+    ## the iterated dictionary.
+    set text [string range "$text" $i end]
+
+    return $Tags
 }
 
 proc apply_syntax_tk { textwidget lang } {
@@ -180,6 +234,7 @@ proc apply_syntax_tk { textwidget lang } {
     $textwidget tag configure comment -foreground #ececec
     $textwidget tag configure variable -foreground red
     $textwidget tag configure word_proc -foreground red
+    $textwidget tag configure DoubleQuotes -foreground red
 }
 
 wm title . "Text-widget"

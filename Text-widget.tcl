@@ -5,19 +5,17 @@
 ## specific procedures wrapped in a single Tcl namespace
 #
 proc parse_text { widget lang } {
-    set text [$widget get 1.1 end];
+    set text [$widget get 0.1 end];
     set SyntaxRules [dict create]
     set SyntaxRules [parse text]
 
-    puts $SyntaxRules
+    dict for {index object} $SyntaxRules {
+         set start [dict get $object start]
+         set tag [dict get $object tag]
+         set end [dict get $object end]
 
-    #dict for {index object} $SyntaxRules {
-        # set start [dict get $object start]
-        # set end [dict get $object end]
-        # set tag [dict get $object tag]
-
-        #$widget tag add $tag start end
-    #}
+        $widget tag add $tag $start $end
+    }
     # return SyntaxRules
 }
 
@@ -37,6 +35,9 @@ proc parse { t } {
     set Now plain
 
     for {set i 0; set c 0; set l 0; set tnum 0} { $i < [string length "$text"]} { incr i } {
+
+        set char [string index "$text" $i]
+
         if {[string compare [string index "$text" $i] "\n"] == 0} {
             incr l
             set c 0
@@ -45,18 +46,16 @@ proc parse { t } {
         if {[string compare $Now "plain"] == 0} {
 
             if { [string compare [string index $text $i] "\""] == 0 } {
-                puts "hit double quote"
             ##
             ## Opening double quote encountered
             ##
                 set text [string range "$text" $i end]
                 set tags [parse_dbl_quotes text]
-                puts $tags
 
                 ## The last tag's end property is of our
                 ## interest as we will use it to adjust
                 ## $charIndex ($c) for current line
-                set c 0
+                #set c 0
                 ##TODO add charIndex from 'end' property from the
                 ## last tag returned by parse_dbl_quotes to $c
 
@@ -78,6 +77,7 @@ proc parse { t } {
                 ## the text that was parsed.
 
                 adjust_tags_indexes tags $c [expr $l-1]
+                puts "(outside: adjust_tags_indexes) $tags"
 
                 concat_dicts Tags tags
             }
@@ -85,7 +85,6 @@ proc parse { t } {
         incr c
      }
 
-     puts $Tags
      return $Tags
 }
 
@@ -93,11 +92,11 @@ proc concat_dicts { D1 D2 } {
     upvar $D1 dict1;
     upvar $D2 dict2;
     set keys [dict keys $dict1]
-    set index [expr [llength keys] - 1]
+    set index [llength keys]
     set d2Length [llength [dict keys $dict2]]
 
     for {set i $index; set y 0} {$y < $d2Length} {incr i; incr y} {
-        dict set dict1 $i [dict get $dict2 y]
+        dict set dict1 $i [dict get $dict2 $y]
 }
 }
 
@@ -109,21 +108,29 @@ proc adjust_tags_indexes { T charOffset lineOffset} {
     ##
 
     if {[dict exists $Tags 0]} {
-        set firstLine [dict get $Tags 0]
-        regexp {^([^.]+).([^.]+)} "[dict get $firstLine start]" -> charIndex lineIndex
-        set charIndex [expr $charIndex + $charOffset]
-        dict set firstLine start "$charIndex.$lineIndex"
-
         #dict set Tags 
-        foreach tag Tags {
+        dict for {key tag} $Tags {
+
+            #puts "key: $key, tag: $tag"
+
+            if {$key == 0} {
+                continue
+            }
             ## we are going to adjust only line numbers
             ## for all lines except the first one.
-            puts "tag is: $tag"
 
             regexp {^([^.]+).([^.]+)} "[dict get $tag start]" -> charIndex lineIndex
             set lineIndex [expr $lineIndex + $lineOffset]
-            dict set tag start "$charIndex.$lineIndex"
+            dict set Tags $key start "$lineIndex.$charIndex"
+            puts "dict set Tags $key start \"$lineIndex.$charIndex\""
         }
+
+        set firstLine [dict get $Tags 0]
+        regexp {^([^.]+).([^.]+)} "[dict get $firstLine start]" -> charIndex lineIndex
+        set charIndex [expr $charIndex + $charOffset]
+        puts "dict set Tags 0 start \"$lineIndex.$charIndex\""
+        dict set Tags 0 start "$lineIndex.$charIndex"
+        puts "(inside: adjust_tags_indexes) $Tags"
     }
 }
 
@@ -153,7 +160,7 @@ proc setLastTag {dict Tag prop value} {
 
     for {set i 0} {$i < $length} {incr i} {
         if {[string compare [dict get $Dict [lindex $reversedKeys $i] tag] $Tag] == 0} {
-            dict set Dict $prop $value
+            dict set Dict [lindex $reversedKeys $i] $prop $value
         }
     }
 }
@@ -174,13 +181,13 @@ proc parse_dbl_quotes { t } {
     for {set i 0; set c 0; set l 0; set vnum 0} { $i < [string length "$text"]} { incr i } {
 
         if { [string compare [string index "$text" $i] {\$}] == 0 } {
-            dict set Tags $vnum [dict create start "$c.$l" tag Tagiable]
+            dict set Tags $vnum [dict create start "$l.$c" tag Variable]
             set Now Variable
             incr vnum
         }
         if { [string compare "$Now" Plain] == 0} {
             if { [string compare [string index "$text" $i] "\""] == 0 } {
-                dict set Tags $vnum [dict create start "$c.$l" tag DoubleQuotes]
+                dict set Tags $vnum [dict create start "$l.$c" tag DoubleQuotes]
                 set Now DoubleQuotes
                 incr vnum
             }
@@ -188,8 +195,7 @@ proc parse_dbl_quotes { t } {
             ## *If the character we are at is a double quote we must terminate
             if {[regexp "\"" [string index "$text" $i]] == 1} {
                 set Now Plain
-                setLastTag Tags DoubleQuotes end "$c.$l"
-                #dict set Tag end "$c.$l"
+                setLastTag Tags DoubleQuotes end "$l.$c"
 
             }
 
@@ -197,7 +203,7 @@ proc parse_dbl_quotes { t } {
             if {[string compare "$Now" Variable] == 0 && [regexp {\W} string index "$text" $i] == 1} {
                 set Now Plain
                 set Tag [dict get $Tags $vnum]
-                dict set Tag end "$c.$l"
+                dict set Tag end "$l.$c"
             }
         }
         incr c;
@@ -205,7 +211,8 @@ proc parse_dbl_quotes { t } {
         ## encountering a new line
         ## character. Reflect that
         ## in the program
-        if {[regexp "\n" [string index $text $i]] == 0} {
+        if {[regexp "\n" [string index $text $i]] == 1} {
+            #puts "new line"
             incr l;
             set c 0;
         }

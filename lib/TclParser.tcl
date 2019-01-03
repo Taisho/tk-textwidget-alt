@@ -212,8 +212,7 @@ namespace eval Tcl {
                 ## *If the character we are at is a double quote we must terminate
                 if {[regexp "\"" [string index "$text" $i]] == 1} {
                     set Now Plain
-                    incr c
-                    setLastTag Tags DoubleQuotes end "$l.$c"
+                    setLastTag Tags DoubleQuotes end "$l.[expr $c+1]"
 
                 }
 
